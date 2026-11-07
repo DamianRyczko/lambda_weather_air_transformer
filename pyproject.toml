@@ -1,0 +1,30 @@
+[project]
+name = "lambda-weather-air-transformer"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "DamianRyczko", email = "damianryczko2003@gmail.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "duckdb>=2.0.0",
+]
+
+[project.scripts]
+lambda-weather-air-transformer = "lambda_weather_air_transformer.main:main"
+
+[build-system]
+requires = ["uv_build>=0.12.5,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "boto3-stubs[s3]>=1.43.123",
+    "boto3[crt]>=1.43.123",
+    "moto[s3]>=5.2.5",
+    "mypy>=2.4.1",
+    "pytest>=9.2.0",
+    "ruff>=0.17.3",
+    "types-boto3[s3]>=1.43.123",
+]
