@@ -4,6 +4,7 @@ import logging
 from lambda_weather_air_transformer.config import s3_con
 from lambda_weather_air_transformer.gios import (
     save_gios_archive_to_parquet,
+    save_gios_index_live_to_parquet,
     save_gios_live_to_parquet,
 )
 from lambda_weather_air_transformer.gold import (
@@ -20,6 +21,7 @@ from lambda_weather_air_transformer.imgw import (
 from lambda_weather_air_transformer.openmeteo import (
     save_openmeteo_air_archive_to_parquet,
     save_openmeteo_air_live_to_parquet,
+    save_openmeteo_current_live_to_parquet,
     save_openmeteo_weather_archive_to_parquet,
     save_openmeteo_weather_live_to_parquet,
 )
@@ -45,6 +47,8 @@ def generate_silver_live():
         save_imgw_synop_live_to_parquet(s3_con)
         save_openmeteo_weather_live_to_parquet(s3_con)
         save_openmeteo_air_live_to_parquet(s3_con)
+        save_gios_index_live_to_parquet(s3_con)
+        save_openmeteo_current_live_to_parquet(s3_con)
 
     except Exception:
         logger.critical("Generating Silver live failed", exc_info=True)

@@ -8,6 +8,8 @@ from lambda_weather_air_transformer.config import (
     OPENMETEO_AIR_SILVER_LIVE,
     OPENMETEO_BRONZE,
     OPENMETEO_BRONZE_ARCHIVE,
+    OPENMETEO_CURRENT_SILVER_ALL,
+    OPENMETEO_CURRENT_SILVER_LIVE,
     OPENMETEO_WEATHER_SILVER_ALL,
     OPENMETEO_WEATHER_SILVER_ARCHIVE,
     OPENMETEO_WEATHER_SILVER_LIVE,
@@ -18,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 def transform_openmeteo_weather_archive(s3_con: duckdb.DuckDBPyConnection) -> duckdb.DuckDBPyRelation:
     logger.info("Transforming OpenMeteo weather archive")
-    return s3_con.sql(f"""
+    open_meteo_weather = s3_con.sql(f"""
         SELECT DISTINCT
             time                      AS measured_at,
             temperature_2m            AS temperature,
@@ -38,11 +40,15 @@ def transform_openmeteo_weather_archive(s3_con: duckdb.DuckDBPyConnection) -> du
         )
         ORDER BY measured_at
     """)
+    if logger.isEnabledFor(logging.DEBUG):
+        row = open_meteo_weather.count("*").fetchall()
+        logger.debug("Fetched %s unique OpenMeteo weather archive rows", row[0][0])
+    return open_meteo_weather
 
 
 def transform_openmeteo_weather_live(s3_con: duckdb.DuckDBPyConnection) -> duckdb.DuckDBPyRelation:
     logger.info("Transforming OpenMeteo weather live")
-    return s3_con.sql(f"""
+    open_meteo_weather = s3_con.sql(f"""
         WITH archive_end AS (
             SELECT max(measured_at) AS cutoff
             FROM read_parquet('{OPENMETEO_WEATHER_SILVER_ARCHIVE}')
@@ -64,7 +70,13 @@ def transform_openmeteo_weather_live(s3_con: duckdb.DuckDBPyConnection) -> duckd
             FROM read_json(
                 '{OPENMETEO_BRONZE}',
                 hive_partitioning = true,
-                union_by_name     = true  -- older snapshots have no boundary_layer_height; without this the 32 sampled files decide the schema
+                columns = {{  -- fixed schema: older snapshots have no boundary_layer_height (-> NULL); detecting it over every file runs out of memory
+                    fetched_at: 'TIMESTAMPTZ',
+                    weather: 'STRUCT(hourly_forecast STRUCT(
+                        "time" TIMESTAMPTZ[], temperature DOUBLE[], relative_humidity DOUBLE[], atmospheric_pressure DOUBLE[],
+                        precipitation DOUBLE[], wind_speed DOUBLE[], wind_direction DOUBLE[], wind_gusts DOUBLE[],
+                        soil_temperature DOUBLE[], cloud_cover DOUBLE[], boundary_layer_height DOUBLE[]))'
+                }}
             )
         )
         SELECT
@@ -84,11 +96,15 @@ def transform_openmeteo_weather_live(s3_con: duckdb.DuckDBPyConnection) -> duckd
         QUALIFY row_number() OVER (PARTITION BY time ORDER BY fetched_at DESC) = 1  -- per hour keep the newest snapshot
         ORDER BY measured_at
     """)
+    if logger.isEnabledFor(logging.DEBUG):
+        row = open_meteo_weather.count("*").fetchall()
+        logger.debug("Fetched %s unique OpenMeteo weather live rows", row[0][0])
+    return open_meteo_weather
 
 
 def transform_openmeteo_air_archive(s3_con: duckdb.DuckDBPyConnection) -> duckdb.DuckDBPyRelation:
     logger.info("Transforming OpenMeteo air archive")
-    return s3_con.sql(f"""
+    open_meteo_air = s3_con.sql(f"""
         SELECT DISTINCT
             time             AS measured_at,
             pm10             AS pm_10,
@@ -103,11 +119,15 @@ def transform_openmeteo_air_archive(s3_con: duckdb.DuckDBPyConnection) -> duckdb
         )
         ORDER BY measured_at
     """)
+    if logger.isEnabledFor(logging.DEBUG):
+        row = open_meteo_air.count("*").fetchall()
+        logger.debug("Fetched %s unique OpenMeteo air archive rows", row[0][0])
+    return open_meteo_air
 
 
 def transform_openmeteo_air_live(s3_con: duckdb.DuckDBPyConnection) -> duckdb.DuckDBPyRelation:
     logger.info("Transforming OpenMeteo air live")
-    return s3_con.sql(f"""
+    open_meteo_air = s3_con.sql(f"""
         WITH archive_end AS (
             SELECT max(measured_at) AS cutoff
             FROM read_parquet('{OPENMETEO_AIR_SILVER_ARCHIVE}')
@@ -138,6 +158,53 @@ def transform_openmeteo_air_live(s3_con: duckdb.DuckDBPyConnection) -> duckdb.Du
         QUALIFY row_number() OVER (PARTITION BY time ORDER BY fetched_at DESC) = 1
         ORDER BY measured_at
     """)
+    if logger.isEnabledFor(logging.DEBUG):
+        row = open_meteo_air.count("*").fetchall()
+        logger.debug("Fetched %s unique OpenMeteo air live rows", row[0][0])
+    return open_meteo_air
+
+
+def transform_openmeteo_current_live(s3_con: duckdb.DuckDBPyConnection) -> duckdb.DuckDBPyRelation:
+    logger.info("Transforming OpenMeteo current weather live")
+    open_meteo_current = s3_con.sql(f"""
+        WITH bucketed AS (
+            SELECT
+                date_trunc('hour', timezone('UTC', weather.weather_current.time) - INTERVAL 1 MICROSECOND) + INTERVAL 1 HOUR AS measured_at,  -- 15-min slot in (t-1h, t] belongs to hour t
+                timezone('UTC', weather.weather_current.time) AS current_at,
+                fetched_at,
+                weather.weather_current AS reading
+            FROM read_json(
+                '{OPENMETEO_BRONZE}',
+                hive_partitioning = true,
+                columns = {{  -- fixed schema: older snapshots have no boundary_layer_height (-> NULL); detecting it over every file runs out of memory
+                    fetched_at: 'TIMESTAMPTZ',
+                    weather: 'STRUCT(weather_current STRUCT(
+                        "time" TIMESTAMPTZ, temperature DOUBLE, relative_humidity DOUBLE, atmospheric_pressure DOUBLE,
+                        precipitation DOUBLE, wind_speed DOUBLE, wind_direction DOUBLE, wind_gusts DOUBLE,
+                        cloud_cover DOUBLE, boundary_layer_height DOUBLE))'
+                }}
+            )
+            WHERE weather IS NOT NULL
+        )
+        SELECT
+            measured_at,
+            reading.temperature,
+            reading.relative_humidity,
+            reading.atmospheric_pressure,
+            reading.precipitation,
+            reading.wind_speed,
+            reading.wind_direction,
+            reading.wind_gusts,
+            reading.cloud_cover,
+            reading.boundary_layer_height
+        FROM bucketed
+        QUALIFY row_number() OVER (PARTITION BY measured_at ORDER BY current_at DESC, fetched_at DESC) = 1  -- per hour keep the newest slot
+        ORDER BY measured_at
+    """)
+    if logger.isEnabledFor(logging.DEBUG):
+        row = open_meteo_current.count("*").fetchall()
+        logger.debug("Fetched %s unique OpenMeteo current weather rows", row[0][0])
+    return open_meteo_current
 
 
 def save_openmeteo_weather_archive_to_parquet(s3_con: duckdb.DuckDBPyConnection) -> None:
@@ -164,6 +231,12 @@ def save_openmeteo_air_live_to_parquet(s3_con: duckdb.DuckDBPyConnection) -> Non
     logger.info("Saved OpenMeteo air live partition to %s", OPENMETEO_AIR_SILVER_LIVE)
 
 
+def save_openmeteo_current_live_to_parquet(s3_con: duckdb.DuckDBPyConnection) -> None:
+    open_meteo_current = transform_openmeteo_current_live(s3_con=s3_con)
+    open_meteo_current.write_parquet(OPENMETEO_CURRENT_SILVER_LIVE, compression="zstd")
+    logger.info("Saved OpenMeteo current weather live partition to %s", OPENMETEO_CURRENT_SILVER_LIVE)
+
+
 def read_openmeteo_weather_silver(s3_con: duckdb.DuckDBPyConnection) -> duckdb.DuckDBPyRelation:
     return s3_con.sql(f"""
         SELECT *
@@ -180,6 +253,17 @@ def read_openmeteo_air_silver(s3_con: duckdb.DuckDBPyConnection) -> duckdb.DuckD
         SELECT *
         FROM read_parquet(
             '{OPENMETEO_AIR_SILVER_ALL}',
+            hive_partitioning = true,
+            union_by_name     = true
+        )
+    """)
+
+
+def read_openmeteo_current_silver(s3_con: duckdb.DuckDBPyConnection) -> duckdb.DuckDBPyRelation:
+    return s3_con.sql(f"""
+        SELECT *
+        FROM read_parquet(
+            '{OPENMETEO_CURRENT_SILVER_ALL}',
             hive_partitioning = true,
             union_by_name     = true
         )

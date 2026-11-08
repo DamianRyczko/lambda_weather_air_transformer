@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 def create_imgw_meteo_table(s3_con: duckdb.DuckDBPyConnection) -> None:
     s3_con.sql(f"""
-        CREATE TEMP TABLE imgw_meteo_live AS
+        CREATE OR REPLACE TEMP TABLE imgw_meteo_live AS
         SELECT
         h.fetched_at,
         s.id AS station_id,
@@ -72,7 +72,7 @@ def find_imgw_meteo_missmatches(s3_con: duckdb.DuckDBPyConnection) -> None:
 
 def transform_imgw_meteo_archive(s3_con: duckdb.DuckDBPyConnection) -> duckdb.DuckDBPyRelation:
     logger.info("Transforming IMGW meteo archive")
-    return s3_con.sql(f"""
+    imgw_meteo = s3_con.sql(f"""
         WITH vertical AS (
             SELECT *
             FROM read_csv(
@@ -103,6 +103,10 @@ def transform_imgw_meteo_archive(s3_con: duckdb.DuckDBPyConnection) -> duckdb.Du
         FROM wide
         ORDER BY measured_at
     """)
+    if logger.isEnabledFor(logging.DEBUG):
+        row = imgw_meteo.count("*").fetchall()
+        logger.debug("Fetched %s unique imgw meteo archive rows", row[0][0])
+    return imgw_meteo
 
 
 def transform_imgw_meteo_live(s3_con: duckdb.DuckDBPyConnection) -> duckdb.DuckDBPyRelation:
@@ -131,12 +135,15 @@ def transform_imgw_meteo_live(s3_con: duckdb.DuckDBPyConnection) -> duckdb.DuckD
     """)
 
     find_imgw_meteo_missmatches(s3_con=s3_con)
+    if logger.isEnabledFor(logging.DEBUG):
+        row = imgw_meteo.count("*").fetchall()
+        logger.debug("Fetched %s unique imgw meteo live rows", row[0][0])
     return imgw_meteo
 
 
 def transform_imgw_synop_archive(s3_con: duckdb.DuckDBPyConnection) -> duckdb.DuckDBPyRelation:
     logger.info("Transforming IMGW synop archive")
-    return s3_con.sql(f"""
+    imgw_synop = s3_con.sql(f"""
         SELECT DISTINCT
             data_pomiaru + to_hours(godzina_pomiaru::INT) AS measured_at,
             temperatura         AS temperature,
@@ -153,11 +160,15 @@ def transform_imgw_synop_archive(s3_con: duckdb.DuckDBPyConnection) -> duckdb.Du
         )
         ORDER BY measured_at
     """)
+    if logger.isEnabledFor(logging.DEBUG):
+        row = imgw_synop.count("*").fetchall()
+        logger.debug("Fetched %s unique imgw synop archive rows", row[0][0])
+    return imgw_synop
 
 
 def transform_imgw_synop_live(s3_con: duckdb.DuckDBPyConnection) -> duckdb.DuckDBPyRelation:
     logger.info("Transforming IMGW synop live")
-    return s3_con.sql(f"""
+    imgw_synop = s3_con.sql(f"""
         WITH archive_end AS (
             SELECT max(measured_at) AS cutoff
             FROM read_parquet('{IMGW_SYNOP_SILVER_ARCHIVE}')
@@ -178,6 +189,10 @@ def transform_imgw_synop_live(s3_con: duckdb.DuckDBPyConnection) -> duckdb.DuckD
         WHERE measured_at > (SELECT cutoff FROM archive_end)
         ORDER BY measured_at
     """)
+    if logger.isEnabledFor(logging.DEBUG):
+        row = imgw_synop.count("*").fetchall()
+        logger.debug("Fetched %s unique imgw synop live rows", row[0][0])
+    return imgw_synop
 
 
 def save_imgw_meteo_archive_to_parquet(s3_con: duckdb.DuckDBPyConnection) -> None:
