@@ -1,8 +1,7 @@
 import duckdb
 
-s3_con = duckdb.connect()
-s3_con.sql("SET home_directory='/tmp'")  # Lambda: only /tmp is writable 
-s3_con.sql("CREATE SECRET (TYPE s3, PROVIDER credential_chain, CHAIN 'env;config', REGION 'eu-north-1')")
+s3_con = duckdb.connect(config={"home_directory": "/tmp"}) 
+s3_con.sql("CREATE SECRET (TYPE s3, PROVIDER credential_chain, CHAIN 'env;config', VALIDATION 'none', REGION 'eu-north-1')")
 
 S3_URL = "s3://weather-air-data-885427126159-eu-north-1-an"
 

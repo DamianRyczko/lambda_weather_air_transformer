@@ -27,7 +27,7 @@ from lambda_weather_air_transformer.openmeteo import (
 )
 
 logger = logging.getLogger(__name__)
-logging.getLogger("lambda_weather_air_archiver").setLevel(logging.INFO)
+logging.getLogger("lambda_weather_air_transformer").setLevel(logging.INFO)
 
 def generate_silver_archive():
     try:
@@ -106,10 +106,10 @@ def main():
 
 def lambda_handler(event, context):
     if "silver" in event["targets"]:
-        generate_silver_archive()
-        generate_silver_live()
+        generate_silver()
 
     if "gold_dataset" in event["targets"]:
+        generate_silver_live()
         generate_gold_dataset()
 
     if "gold_current_data" in event["targets"]:
