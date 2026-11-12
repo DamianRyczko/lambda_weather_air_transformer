@@ -46,7 +46,8 @@ def transform_silver(s3_con: duckdb.DuckDBPyConnection, hours_ahead: int = 0) ->
                     openmeteo.wind_gusts,
                     openmeteo.soil_temperature,
                     openmeteo.cloud_cover,
-                    openmeteo.boundary_layer_height
+                    openmeteo.boundary_layer_height,
+                    openmeteo.boundary_layer_height_source
                     FROM spine
                     LEFT JOIN gios USING (measured_at)
                     LEFT JOIN openmeteo USING (measured_at)
@@ -67,7 +68,7 @@ def save_train_data_to_parquet(s3_con: duckdb.DuckDBPyConnection) -> None:
     logger.info("Saved train dataset to %s", GOLD)
 
 
-def transform_prediction_data(s3_con: duckdb.DuckDBPyConnection, days: int = 7, hours_ahead: int = 24) -> duckdb.DuckDBPyRelation:
+def transform_prediction_data(s3_con: duckdb.DuckDBPyConnection, days: int = 8, hours_ahead: int = 24) -> duckdb.DuckDBPyRelation:
     logger.info("Transforming prediction data")
     transform_silver(s3_con=s3_con, hours_ahead=hours_ahead).create_view("train_data")
     prediction_data = s3_con.sql("""
@@ -82,13 +83,13 @@ def transform_prediction_data(s3_con: duckdb.DuckDBPyConnection, days: int = 7, 
     return prediction_data
 
 
-def save_prediction_data_to_parquet(s3_con: duckdb.DuckDBPyConnection, days: int = 7, hours_ahead: int = 24) -> None:
+def save_prediction_data_to_parquet(s3_con: duckdb.DuckDBPyConnection, days: int = 8, hours_ahead: int = 24) -> None:
     prediction_data = transform_prediction_data(s3_con=s3_con, days=days, hours_ahead=hours_ahead)
     prediction_data.write_parquet(GOLD_PREDICTION, compression="zstd")
     logger.info("Saved prediction dataset to %s", GOLD_PREDICTION)
 
 
-def transform_app_data(s3_con: duckdb.DuckDBPyConnection, days: int = 7, hours_ahead: int = 24) -> duckdb.DuckDBPyRelation:
+def transform_app_data(s3_con: duckdb.DuckDBPyConnection, days: int = 8, hours_ahead: int = 24) -> duckdb.DuckDBPyRelation:
     logger.info("Transforming app data")
     read_imgw_meteo_silver(s3_con=s3_con).create_view("imgwmeteo")
     read_openmeteo_current_silver(s3_con=s3_con).create_view("openmeteo_current")
@@ -153,7 +154,7 @@ def transform_app_data(s3_con: duckdb.DuckDBPyConnection, days: int = 7, hours_a
     return app_data
 
 
-def save_app_data_to_parquet(s3_con: duckdb.DuckDBPyConnection, days: int = 7, hours_ahead: int = 24) -> None:
+def save_app_data_to_parquet(s3_con: duckdb.DuckDBPyConnection, days: int = 8, hours_ahead: int = 24) -> None:
     app_data = transform_app_data(s3_con=s3_con, days=days, hours_ahead=hours_ahead)
     app_data.write_parquet(GOLD_APP, compression="zstd")
     logger.info("Saved app dataset to %s", GOLD_APP)

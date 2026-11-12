@@ -32,7 +32,8 @@ def transform_openmeteo_weather_archive(s3_con: duckdb.DuckDBPyConnection) -> du
             wind_gusts_10m            AS wind_gusts,
             soil_temperature_0_to_7cm AS soil_temperature,
             cloud_cover,
-            boundary_layer_height
+            boundary_layer_height,
+            boundary_layer_height_source
         FROM read_csv(
             '{OPENMETEO_BRONZE_ARCHIVE}',
             hive_partitioning = true,
