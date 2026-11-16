@@ -12,7 +12,8 @@ from lambda_weather_air_transformer.config import (
     GIOS_SILVER_LIVE,
 )
 
-SELECTED_STATION = "DsWrocWybCon"
+
+WROCLAW_STATIONS = ("DsWrocWybCon", "DsWrocAlWisn", "DsWrocBartni")
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +30,7 @@ def transform_gios_archive(s3_con: duckdb.DuckDBPyConnection) -> duckdb.DuckDBPy
                 '{GIOS_BRONZE_ARCHIVE}',
                 hive_partitioning = true
             )
-            WHERE station_code LIKE '{SELECTED_STATION}'
+            WHERE station_code IN {WROCLAW_STATIONS}
         )
         PIVOT vertical
         ON indicator_code
@@ -63,7 +64,6 @@ def transform_gios_live(s3_con: duckdb.DuckDBPyConnection) -> duckdb.DuckDBPyRel
                 UNNEST(h.stations)   AS t1(s),
                 UNNEST(s.sensors)    AS t2(sen),
                 UNNEST(sen.readings) AS t3(r)
-            WHERE s.station_code LIKE '{SELECTED_STATION}'
         ),
         live_only AS (
             SELECT *

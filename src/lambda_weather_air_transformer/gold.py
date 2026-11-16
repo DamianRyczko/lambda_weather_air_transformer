@@ -7,7 +7,10 @@ from lambda_weather_air_transformer.config import (
     GOLD_APP,
     GOLD_PREDICTION,
 )
-from lambda_weather_air_transformer.gios import read_gios_index_silver, read_gios_silver
+from lambda_weather_air_transformer.gios import (
+    read_gios_index_silver,
+    read_gios_silver,
+)
 from lambda_weather_air_transformer.imgw import read_imgw_meteo_silver
 from lambda_weather_air_transformer.openmeteo import (
     read_openmeteo_air_silver,
@@ -17,9 +20,11 @@ from lambda_weather_air_transformer.openmeteo import (
 
 logger = logging.getLogger(__name__)
 
+SELECTED_STATION = "DsWrocWybCon"
+
 def transform_silver(s3_con: duckdb.DuckDBPyConnection, hours_ahead: int = 0) -> duckdb.DuckDBPyRelation:
     logger.info("Transforming Silver data")
-    read_gios_silver(s3_con=s3_con).create_view("gios")
+    read_gios_silver(s3_con=s3_con).filter(f"station_code = '{SELECTED_STATION}'").create_view("gios")
     read_openmeteo_weather_silver(s3_con=s3_con).create_view("openmeteo")
     train_data = s3_con.sql("""
                     WITH spine AS (
@@ -95,6 +100,26 @@ def transform_app_data(s3_con: duckdb.DuckDBPyConnection, days: int = 8, hours_a
     read_openmeteo_current_silver(s3_con=s3_con).create_view("openmeteo_current")
     read_openmeteo_air_silver(s3_con=s3_con).create_view("cams")
     read_gios_index_silver(s3_con=s3_con).create_view("gios_index")
+    read_gios_silver(s3_con=s3_con).create_view("gios")
+    # one column per station and pollutant: gios_<station>_<pollutant>
+    gios_stations = s3_con.sql("""
+        WITH long AS (
+            UNPIVOT gios
+            ON COLUMNS(* EXCLUDE (measured_at, station_code, source))
+            INTO NAME indicator_code VALUE value
+        )
+        PIVOT (
+            SELECT
+                measured_at,
+                concat('gios_', replace(station_code, 'DsWroc', ''), '_', indicator_code) AS column_name,
+                value
+            FROM long
+        )
+        ON column_name
+        USING first(value)
+        GROUP BY measured_at
+    """)
+    s3_con.register("gios_stations", gios_stations)  # a PIVOT can't be a view
     app_data = s3_con.sql("""
         WITH spine AS (
             SELECT unnest(generate_series(
@@ -139,12 +164,14 @@ def transform_app_data(s3_con: duckdb.DuckDBPyConnection, days: int = 8, hours_a
             cams.NO2   AS cams_NO2,
             cams.O3    AS cams_O3,
             cams.SO2   AS cams_SO2,
-            gios_index.* EXCLUDE (measured_at, source)
+            gios_index.* EXCLUDE (measured_at, source),
+            gios_stations.* EXCLUDE (measured_at)
         FROM spine
         LEFT JOIN imgw_hourly ON imgw_hourly.hour = spine.measured_at
         LEFT JOIN openmeteo_current ON openmeteo_current.measured_at = spine.measured_at
         LEFT JOIN cams ON cams.measured_at = spine.measured_at
         LEFT JOIN gios_index ON gios_index.measured_at = spine.measured_at
+        LEFT JOIN gios_stations ON gios_stations.measured_at = spine.measured_at
         WHERE spine.measured_at >= timezone('UTC', now()) - to_days($days)
         ORDER BY spine.measured_at
     """, params={"days": days, "hours_ahead": hours_ahead})
